@@ -1,1 +1,37 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Extractor Agent</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        label { font-weight: bold; }
+        input { width: 100%; padding: 10px; margin: 15px 0; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #status { margin-top: 20px; color: #555; font-style: italic; }
+        .footer { margin-top: 30px; font-size: 12px; color: #aaa; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Website Contact Extractor</h1>
+        <p>Enter a website URL and get email, phone, and social links in an Excel file.</p>
+        <form action="/extract" method="post" onsubmit="showLoader()">
+            <label>Website URL:</label>
+            <input type="text" name="url" placeholder="e.g., https://example.com" required>
+            <button type="submit">Extract Data</button>
+        </form>
+        <div id="status"></div>
+        <div class="footer">Powered by Tavily API (fallback) + Direct scraping</div>
+    </div>
+    <script>
+        function showLoader() {
+            document.getElementById('status').innerHTML = '⏳ Processing... Please wait (may take up to 30 seconds).';
+        }
+    </script>
+</body>
+  </html>
