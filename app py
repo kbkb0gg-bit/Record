@@ -1,0 +1,164 @@
+# app.py
+from flask import Flask, render_template, request, send_file, jsonify
+import re
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse, urljoin
+import time
+import os
+import uuid
+
+app = Flask(__name__)
+
+# ====================== TAVILY API KEY (Apni key daalein) ======================
+TAVILY_API_KEY = "tvly_your_actual_key_here"   # <-- Yahan apni Tavily key paste karein
+
+# ====================== Helper Functions (Same as before) ======================
+def extract_email(text):
+    pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    return list(set(re.findall(pattern, text)))
+
+def extract_phone(text):
+    patterns = [
+        r'\+?[0-9]{1,3}[\s\-]?\(?[0-9]{1,4}\)?[\s\-]?[0-9]{3,4}[\s\-]?[0-9]{3,4}',
+        r'0[0-9]{1,2}[\s\-]?[0-9]{3,4}[\s\-]?[0-9]{3,4}'
+    ]
+    phones = []
+    for p in patterns:
+        phones.extend(re.findall(p, text))
+    return list(set(phones))[:5]
+
+def extract_social_links(soup, base_url):
+    social_domains = [
+        'linkedin.com/company', 'linkedin.com/in',
+        'twitter.com', 'x.com',
+        'facebook.com', 'fb.com',
+        'instagram.com',
+        'youtube.com/c', 'youtube.com/channel'
+    ]
+    found = set()
+    for a in soup.find_all('a', href=True):
+        full_url = urljoin(base_url, a['href'])
+        for domain in social_domains:
+            if domain in full_url:
+                found.add(full_url)
+    return list(found)
+
+def get_site_name(url):
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace('www.', '')
+    return domain.split('.')[0]
+
+# ====================== Tavily API Functions ======================
+def search_with_tavily(query):
+    url = "https://api.tavily.com/search"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TAVILY_API_KEY}"}
+    payload = {"query": query, "search_depth": "basic", "max_results": 10, "include_raw_content": True}
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        return resp.json()
+    except:
+        return None
+
+def crawl_site_with_tavily(start_url):
+    url = "https://api.tavily.com/crawl"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TAVILY_API_KEY}"}
+    payload = {"url": start_url, "instructions": "find contact email phone", "max_depth": 2, "limit": 20}
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=30)
+        return resp.json()
+    except:
+        return None
+
+def extract_page_with_tavily(urls):
+    url = "https://api.tavily.com/extract"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TAVILY_API_KEY}"}
+    payload = {"urls": urls[:5], "extract_depth": "basic"}
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=20)
+        return resp.json()
+    except:
+        return None
+
+# ====================== Main Extraction Logic ======================
+def extract_from_url_only(url):
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        text = soup.get_text()
+        emails = extract_email(text)
+        phones = extract_phone(text)
+        social = extract_social_links(soup, url)
+        return {"found": True, "emails": emails, "phones": phones, "social": social}
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+def extract_with_tavily_fallback(site_url):
+    print(f"Processing: {site_url}")
+    result = extract_from_url_only(site_url)
+    if result["found"] and (result["emails"] or result["phones"]):
+        return result
+
+    if not TAVILY_API_KEY or "your_tavily" in TAVILY_API_KEY:
+        return result
+
+    # Tavily fallback
+    parsed = urlparse(site_url)
+    domain = parsed.netloc.replace('www.', '')
+    crawled = crawl_site_with_tavily(site_url)
+    all_emails = set()
+    all_phones = set()
+    if crawled and "results" in crawled:
+        for page in crawled["results"]:
+            content = page.get("raw_content", "")
+            all_emails.update(extract_email(content))
+            all_phones.update(extract_phone(content))
+
+    if not all_emails and not all_phones:
+        search_res = search_with_tavily(f"site:{domain} contact email phone")
+        if search_res and "results" in search_res:
+            for res in search_res["results"]:
+                content = res.get("content", "")
+                all_emails.update(extract_email(content))
+                all_phones.update(extract_phone(content))
+
+    if all_emails or all_phones:
+        result["emails"] = list(all_emails)
+        result["phones"] = list(all_phones)
+    return result
+
+# ====================== Flask Routes ======================
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/extract', methods=['POST'])
+def extract():
+    url = request.form.get('url', '').strip()
+    if not url:
+        return jsonify({"error": "URL required"}), 400
+    if not url.startswith('http'):
+        url = 'https://' + url
+
+    try:
+        data = extract_with_tavily_fallback(url)
+        # Create DataFrame
+        df = pd.DataFrame([{
+            "Website URL": url,
+            "Email(s)": ", ".join(data.get("emails", [])) if data.get("emails") else "Not found",
+            "Phone(s)": ", ".join(data.get("phones", [])) if data.get("phones") else "Not found",
+            "Social Links": ", ".join(data.get("social", [])) if data.get("social") else "Not found"
+        }])
+        # Save to temporary file
+        filename = f"{get_site_name(url)}_{uuid.uuid4().hex[:6]}.xlsx"
+        filepath = os.path.join("downloads", filename)
+        os.makedirs("downloads", exist_ok=True)
+        df.to_excel(filepath, index=False)
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
