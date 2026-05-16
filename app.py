@@ -12,7 +12,7 @@ import uuid
 app = Flask(__name__)
 
 # ====================== TAVILY API KEY (Apni key daalein) ======================
-TAVILY_API_KEY = "tvly_your_actual_key_here"   # <-- Yahan apni Tavily key paste karein
+TAVILY_API_KEY = "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"   # <-- Yahan apni Tavily key paste karein
 
 # ====================== Helper Functions (Same as before) ======================
 def extract_email(text):
